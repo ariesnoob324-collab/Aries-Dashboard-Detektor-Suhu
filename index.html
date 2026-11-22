@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Server Room Monitor</title>
+<style>
+:root{--bg:#0f1318;--card:#181e26;--line:#273040;--tx:#e8edf4;--mut:#8b97a8;--ok:#2ecc71;--bad:#ff4d4f;--warn:#f5a623;--acc:#4da3ff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:12px 16px 40px;max-width:720px;margin-inline:auto}
+h1{font-size:18px;margin:6px 0 10px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+h2{font-size:13px;color:var(--mut);text-transform:uppercase;letter-spacing:.08em;margin:0 0 10px}
+.chip{font-size:12px;padding:3px 10px;border-radius:99px;background:#2a3342;color:var(--mut);white-space:nowrap}
+.chip.ok{background:#12351f;color:var(--ok)}.chip.bad{background:#3d1517;color:var(--bad)}.chip.warn{background:#3b2c10;color:var(--warn)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.banner{text-align:center;font-weight:700;font-size:20px;letter-spacing:.1em;padding:10px;border-radius:12px;background:#12351f;color:var(--ok);margin-bottom:12px}
+.banner.crit{background:#4a1316;color:#fff;animation:pulse 1s infinite}
+@keyframes pulse{50%{background:#8c1d22}}
+.big{display:flex;justify-content:space-around;text-align:center}
+.big b{display:block;font-size:44px;font-variant-numeric:tabular-nums;line-height:1.1}
+.big span{color:var(--mut);font-size:12px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.dm{background:#1a0506;border:1px solid #3a0f12;border-radius:8px;padding:8px 4px;text-align:center}
+.dm small{display:block;color:var(--mut);font-size:10px;margin-bottom:4px}
+.dm div{font:700 14px ui-monospace,Menlo,Consolas,monospace;color:#ff3b30;text-shadow:0 0 6px #ff3b30aa;min-height:19px;word-break:break-all}
+canvas{width:100%;height:130px;display:block}
+label{display:block;font-size:13px;color:var(--mut);margin:12px 0 4px}
+.row{display:flex;gap:8px;align-items:center}
+input[type=number],input[type=text]{flex:1;min-width:0;background:#0f1318;color:var(--tx);border:1px solid var(--line);border-radius:10px;padding:10px;font-size:16px}
+input[type=range]{flex:2;accent-color:var(--acc)}
+button{background:var(--acc);color:#04121f;border:0;border-radius:10px;padding:10px 14px;font-weight:700;font-size:14px;cursor:pointer}
+button.sec{background:#2a3342;color:var(--tx)}button.red{background:var(--bad);color:#fff}
+button:disabled,input:disabled{opacity:.4}
+.btns{display:flex;gap:8px;flex-wrap:wrap}.btns button{flex:1}
+.val{min-width:44px;text-align:right;font-variant-numeric:tabular-nums}
+#ack{font-size:12px;color:var(--mut);margin-top:8px;min-height:16px}
+.meta{display:flex;justify-content:space-between;font-size:12px;color:var(--mut);margin-top:8px}
+.off{opacity:.45}
+</style>
+</head>
+<body>
+<h1>Server Room <span class="chip" id="conn">Menyambung…</span></h1>
+
+<div class="card">
+  <div class="row">
+    <input type="text" id="dev" placeholder="ID perangkat" autocapitalize="none">
+    <button id="btnConn">Sambung</button>
+  </div>
+  <div class="meta"><span id="devState">Perangkat: -</span><span id="rssi">-</span></div>
+</div>
+
+<div id="live">
+<div class="banner" id="banner">MENUNGGU DATA</div>
+
+<div class="card">
+  <div class="big">
+    <div><b id="temp">--.-</b><span>Suhu °C</span></div>
+    <div><b id="hum">--.-</b><span>Kelembaban %</span></div>
+  </div>
+  <div class="meta"><span id="clock">--:--:--</span><span id="dateTxt">-</span></div>
+</div>
+
+<div class="card">
+  <h2>Cermin panel dot matrix</h2>
+  <div class="grid">
+    <div class="dm"><small>JAM</small><div id="p0">--:--:--</div></div>
+    <div class="dm"><small>HARI</small><div id="p1">-</div></div>
+    <div class="dm"><small>TANGGAL</small><div id="p2">-</div></div>
+    <div class="dm"><small>SUHU</small><div id="p3">-</div></div>
+    <div class="dm"><small>KELEMBABAN</small><div id="p4">-</div></div>
+    <div class="dm"><small>STATUS</small><div id="p5">-</div></div>
+    <div class="dm"><small>BATAS HI/LO</small><div id="p6">-</div></div>
+    <div class="dm"><small>TIMER MUTE</small><div id="p7">-</div></div>
+    <div class="dm"><small>PESAN</small><div id="p8">-</div></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Grafik suhu (±90 detik)</h2>
+  <canvas id="chart"></canvas>
+</div>
+</div>
+
+<div class="card" id="ctl">
+  <h2>Pengaturan</h2>
+  <div class="btns">
+    <button class="red" id="bMute">MUTE ALARM</button>
+    <button class="sec" id="bUnmute">UNMUTE</button>
+  </div>
+
+  <label>Batas suhu CRITICAL (°C) — disimpan di NVS</label>
+  <div class="row">
+    <input type="range" id="thrR" min="10" max="80" step="0.5" value="30">
+    <input type="number" id="thrN" min="10" max="80" step="0.5" value="30" style="max-width:90px">
+    <button id="bThr">Kirim</button>
+  </div>
+
+  <label>Selisih histeresis (LOW = HIGH − selisih)</label>
+  <div class="row">
+    <input type="number" id="bandN" min="0.5" max="10" step="0.5" value="2">
+    <button id="bBand">Kirim</button>
+  </div>
+
+  <label>Durasi mute (detik, 0 = sampai suhu aman, maks 599)</label>
+  <div class="row">
+    <input type="number" id="muteN" min="0" max="599" step="1" value="0">
+    <button id="bMuteT">Kirim</button>
+  </div>
+
+  <label>Kecerahan dot matrix <span class="val" id="brV">6</span></label>
+  <div class="row"><input type="range" id="brR" min="0" max="15" step="1" value="6"></div>
+
+  <label>Pesan di panel dot matrix (maks 8 karakter)</label>
+  <div class="row">
+    <input type="text" id="msgT" maxlength="8" placeholder="HALO">
+    <button id="bMsg">Tampil</button>
+    <button class="sec" id="bClr">Hapus</button>
+  </div>
+
+  <div class="btns" style="margin-top:14px">
+    <button class="sec" id="bReset">Kembalikan default (30 / 28)</button>
+  </div>
+  <div id="ack"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const BROKER = 'wss://broker.hivemq.com:8884/mqtt';
+let dev = localStorage.getItem('dev') || 'aries_harianto';
+let T = {}, client = null, lastLive = 0, shown = 0, target = 0, tH = 0, tHtarget = 0;
+const hist = [];
+let lastCfg = {};
+
+$('dev').value = dev;
+
+function topics(){
+  const b = 'ukk/server_room/' + dev + '/';
+  T = {live:b+'live', cmd:b+'command', ack:b+'ack', status:b+'status', telem:b+'telemetry'};
+}
+function setConn(t, c){ const e = $('conn'); e.textContent = t; e.className = 'chip ' + c; }
+function enableCtl(on){
+  document.querySelectorAll('#ctl button,#ctl input').forEach(e => e.disabled = !on);
+}
+function send(text){
+  if (!client || !client.connected){ $('ack').textContent = 'Belum terhubung ke broker'; return; }
+  client.publish(T.cmd, String(text));
+  $('ack').textContent = 'Terkirim: ' + text;
+}
+
+function connect(){
+  if (client) client.end(true);
+  dev = $('dev').value.trim().toLowerCase().replace(/[^a-z0-9_\-]/g, '') || 'aries_harianto';
+  $('dev').value = dev;
+  localStorage.setItem('dev', dev);
+  topics();
+  hist.length = 0; lastCfg = {}; lastLive = 0;
+  setConn('Menyambung…', 'warn'); enableCtl(false);
+  client = mqtt.connect(BROKER, {
+    clientId: 'web_' + Math.random().toString(16).slice(2, 10),
+    keepalive: 30, reconnectPeriod: 2000, connectTimeout: 8000, clean: true
+  });
+  client.on('connect', () => {
+    setConn('Broker terhubung', 'ok'); enableCtl(true);
+    client.subscribe([T.live, T.status, T.ack]);
+  });
+  client.on('reconnect', () => { setConn('Menyambung ulang…', 'warn'); enableCtl(false); });
+  client.on('offline', () => { setConn('Offline', 'bad'); enableCtl(false); });
+  client.on('error', () => setConn('Error koneksi', 'bad'));
+  client.on('message', (t, m) => {
+    const s = m.toString();
+    if (t === T.live){ try { render(JSON.parse(s)); } catch(e){} }
+    else if (t === T.status){ $('devState').textContent = 'Perangkat: ' + s; }
+    else if (t === T.ack){ $('ack').textContent = 'Perangkat: ' + s; }
+  });
+}
+
+function setIfIdle(id, v){
+  const e = $(id);
+  if (document.activeElement !== e) e.value = v;
+}
+
+function render(d){
+  lastLive = Date.now();
+  $('live').classList.remove('off');
+  const crit = d.status === 'CRITICAL';
+  const b = $('banner');
+  b.textContent = crit ? (d.muted ? 'CRITICAL (MUTED)' : 'CRITICAL') : 'NORMAL';
+  b.className = 'banner' + (crit ? ' crit' : '');
+
+  target = d.sensor_ok ? d.temp : target;
+  tHtarget = d.sensor_ok ? d.hum : tHtarget;
+  $('clock').textContent = d.time + ' WIB';
+  $('dateTxt').textContent = d.day + ', ' + d.date.split('-').reverse().join('/');
+  $('rssi').textContent = 'WiFi ' + d.rssi + ' dBm · up ' + d.uptime + 's';
+
+  const dd = d.date.split('-');
+  const mon = ['JAN','FEB','MAR','APR','MEI','JUN','JUL','AGU','SEP','OKT','NOV','DES'][(+dd[1]||1)-1];
+  $('p0').textContent = d.time;
+  $('p1').textContent = d.day.toUpperCase();
+  $('p2').textContent = dd[2] + ' ' + mon + ' ' + dd[0].slice(2);
+  $('p3').textContent = d.sensor_ok ? d.temp.toFixed(1) + 'C' : '--.-C';
+  $('p4').textContent = d.sensor_ok ? d.hum.toFixed(1) + '%' : '--.-%';
+  $('p5').textContent = d.sensor_ok ? d.status : 'SENS ERR';
+  $('p6').textContent = d.thr_high.toFixed(1) + '/' + d.thr_low.toFixed(1);
+  let mt = 'NO ALARM';
+  if (crit) mt = !d.muted ? 'ALARM ON' : (d.mute_cfg ? 'MUTE ' + Math.floor(d.mute_left/60) + ':' + String(d.mute_left%60).padStart(2,'0') : 'MUTED');
+  $('p7').textContent = mt;
+  $('p8').textContent = crit ? 'OVERHEAT! ' + d.temp.toFixed(1) + 'C' : (d.msg || 'ONLINE');
+
+  // sinkronkan kontrol bila nilai di perangkat berubah
+  if (lastCfg.thr_high !== d.thr_high){ setIfIdle('thrR', d.thr_high); setIfIdle('thrN', d.thr_high); }
+  if (lastCfg.band !== d.band) setIfIdle('bandN', d.band);
+  if (lastCfg.mute_cfg !== d.mute_cfg) setIfIdle('muteN', d.mute_cfg);
+  if (lastCfg.bright !== d.bright){ setIfIdle('brR', d.bright); $('brV').textContent = d.bright; }
+  lastCfg = d;
+
+  if (d.sensor_ok){
+    hist.push({t:d.temp, hi:d.thr_high, lo:d.thr_low});
+    if (hist.length > 90) hist.shift();
+    drawChart();
+  }
+}
+
+// angka halus
+function tick(){
+  shown += (target - shown) * 0.2;
+  tH += (tHtarget - tH) * 0.2;
+  if (Math.abs(target - shown) < 0.01) shown = target;
+  if (Math.abs(tHtarget - tH) < 0.01) tH = tHtarget;
+  if (lastLive){
+    $('temp').textContent = shown.toFixed(1);
+    $('hum').textContent = tH.toFixed(1);
+  }
+  requestAnimationFrame(tick);
+}
+
+function drawChart(){
+  const c = $('chart'), r = devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  c.width = w * r; c.height = h * r;
+  const x = c.getContext('2d'); x.scale(r, r);
+  x.clearRect(0, 0, w, h);
+  if (hist.length < 2) return;
+  const all = hist.flatMap(p => [p.t, p.hi, p.lo]);
+  const mn = Math.min(...all) - 1, mx = Math.max(...all) + 1;
+  const Y = v => h - 14 - (v - mn) / (mx - mn) * (h - 22);
+  const X = i => 6 + i / 89 * (w - 12);
+  const last = hist[hist.length - 1];
+  x.setLineDash([4, 4]); x.lineWidth = 1;
+  x.strokeStyle = '#ff4d4f'; x.beginPath(); x.moveTo(0, Y(last.hi)); x.lineTo(w, Y(last.hi)); x.stroke();
+  x.strokeStyle = '#2ecc71'; x.beginPath(); x.moveTo(0, Y(last.lo)); x.lineTo(w, Y(last.lo)); x.stroke();
+  x.setLineDash([]); x.lineWidth = 2; x.strokeStyle = '#4da3ff'; x.lineJoin = 'round';
+  x.beginPath();
+  hist.forEach((p, i) => i ? x.lineTo(X(i), Y(p.t)) : x.moveTo(X(i), Y(p.t)));
+  x.stroke();
+  x.fillStyle = '#8b97a8'; x.font = '11px system-ui';
+  x.fillText('HI ' + last.hi.toFixed(1), 6, Math.max(10, Y(last.hi) - 3));
+  x.fillText('LO ' + last.lo.toFixed(1), 6, Math.min(h - 2, Y(last.lo) + 12));
+}
+
+// perangkat tidak mengirim data
+setInterval(() => {
+  if (lastLive && Date.now() - lastLive > 4000){
+    $('live').classList.add('off');
+    $('banner').textContent = 'PERANGKAT TIDAK MENGIRIM DATA';
+    $('banner').className = 'banner';
+  }
+}, 1000);
+
+// kontrol
+$('btnConn').onclick = connect;
+$('bMute').onclick   = () => send('MUTE');
+$('bUnmute').onclick = () => send('UNMUTE');
+$('thrR').oninput    = () => $('thrN').value = $('thrR').value;
+$('thrN').oninput    = () => $('thrR').value = $('thrN').value;
+$('bThr').onclick    = () => send('THR=' + $('thrN').value);
+$('bBand').onclick   = () => send('BAND=' + $('bandN').value);
+$('bMuteT').onclick  = () => send('MUTET=' + $('muteN').value);
+$('bMsg').onclick    = () => send('MSG=' + $('msgT').value);
+$('bClr').onclick    = () => { $('msgT').value = ''; send('CLRMSG'); };
+$('bReset').onclick  = () => send('RESET');
+let brTimer;
+$('brR').oninput = () => {
+  $('brV').textContent = $('brR').value;
+  clearTimeout(brTimer);
+  brTimer = setTimeout(() => send('BRIGHT=' + $('brR').value), 350);
+};
+window.addEventListener('resize', drawChart);
+
+enableCtl(false);
+requestAnimationFrame(tick);
+connect();
+</script>
+</body>
+</html>
